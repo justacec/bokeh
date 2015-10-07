@@ -370,33 +370,314 @@ class LineGLGlyph extends BaseGLGlyph
 
     """
     
-    VERT_: """
-      precision mediump float;
-      
-      attribute vec2 a_position;
-            
-      uniform vec2 u_canvas_size;
-      uniform vec2 u_offset;
-      uniform vec2 u_scale;
-      
-      void main () {
-        
-        // Calculate position - the -0.5 is to correct for canvas origin
-        vec2 posn = a_position * u_scale + u_offset - vec2(0.5, 0.5); // in pixels
-        posn /= u_canvas_size;  // in 0..1
-        gl_Position = vec4(posn*2.0-1.0, 0.0, 1.0);
-        gl_Position.y *= -1.0;
-      }
-    """
-    
-    
-    FRAG: """
+    FRAG_: """
       precision mediump float;
       
       void main () {
         gl_FragColor = vec4(0.0, 0.5, 0.0, 1.0);
       }
     
+    """
+    
+    FRAG: """
+      const float PI = 3.14159265358979323846264;
+      const float THETA = 15.0 * 3.14159265358979323846264/180.0;
+      
+      uniform sampler2D u_dash_atlas;
+      
+      varying vec4  v_color;
+      varying vec2  v_segment;
+      varying vec2  v_angles;
+      varying vec2  v_linecaps;
+      varying vec2  v_texcoord;
+      varying vec2  v_miter;
+      varying float v_miter_limit;
+      varying float v_length;
+      varying float v_linejoin;
+      varying float v_linewidth;
+      varying float v_antialias;
+      varying float v_dash_phase;
+      varying float v_dash_period;
+      varying float v_dash_index;
+      varying vec2  v_dash_caps;
+      varying float v_closed;
+      
+      // Compute distance to cap ----------------------------------------------------
+      float cap( int type, float dx, float dy, float t )
+      {
+          float d = 0.0;
+          dx = abs(dx);
+          dy = abs(dy);
+          
+          if      (type == 0)  discard;  // None
+          else if (type == 1)  d = sqrt(dx*dx+dy*dy);  // Round
+          else if (type == 3)  d = (dx+abs(dy));  // Triangle in
+          else if (type == 2)  d = max(abs(dy),(t+dx-abs(dy)));  // Triangle out
+          else if (type == 4)  d = max(dx,dy);  // Square
+          else if (type == 5)  d = max(dx+t,dy);  // Butt
+          return d;
+      }
+          
+      // Compute distance to join -------------------------------------------------
+      float join( in int type, in float d, in vec2 segment, in vec2 texcoord, in vec2 miter,
+            in float miter_limit, in float linewidth )
+      {
+          float dx = texcoord.x;
+          // Round join
+          if( type == 1 ) {
+              if (dx < segment.x) {
+                  d = max(d,length( texcoord - vec2(segment.x,0.0)));
+                  //d = length( texcoord - vec2(segment.x,0.0));
+              } else if (dx > segment.y) {
+                  d = max(d,length( texcoord - vec2(segment.y,0.0)));
+                  //d = length( texcoord - vec2(segment.y,0.0));
+              }
+          }        
+          // Bevel join
+          else if ( type == 2 ) {
+              if( (dx < segment.x) ||  (dx > segment.y) )
+                  d = max(d, min(abs(miter.x),abs(miter.y)));
+          }        
+          // Miter limit
+          if( (dx < segment.x) ||  (dx > segment.y) ) {
+              d = max(d, min(abs(miter.x),abs(miter.y)) - miter_limit*linewidth/2.0 );
+          }        
+          return d;
+      }
+      
+      void main() 
+      {
+          gl_FragColor = vec4(0.,0.,0.,1.);
+          return;
+      
+          // If color is fully transparent we just discard the fragment
+          if( v_color.a <= 0.0 ) {
+              discard;
+          }
+      
+          // Test if dash pattern is the solid one (0)
+          bool solid =  (v_dash_index == 0.0);
+      
+          // Test if path is closed
+          bool closed = (v_closed > 0.0);
+          
+          vec4 color = v_color;
+          float dx = v_texcoord.x;
+          float dy = v_texcoord.y;
+          float t = v_linewidth/2.0-v_antialias;
+          float width = v_linewidth;
+          float d = 0.0;
+         
+          vec2 linecaps = v_linecaps;
+          vec2 dash_caps = v_dash_caps;
+          float line_start = 0.0;
+          float line_stop  = v_length;
+  
+          // Solid line --------------------------------------------------------------
+          if( solid ) {
+              d = abs(dy);
+              if( (!closed) && (dx < line_start) ) {
+                  d = cap( int(v_linecaps.x), abs(dx), abs(dy), t );
+              }
+              else if( (!closed) &&  (dx > line_stop) ) {
+                  d = cap( int(v_linecaps.y), abs(dx)-line_stop, abs(dy), t );
+              }
+              else {
+                  d = join( int(v_linejoin), abs(dy), v_segment, v_texcoord, v_miter, v_miter_limit, v_linewidth );
+              }
+  
+          // Dash line --------------------------------------------------------------
+          } else {
+              float segment_start = v_segment.x;
+              float segment_stop  = v_segment.y;
+              float segment_center= (segment_start+segment_stop)/2.0;
+              float freq          = v_dash_period*width;
+              float u = mod( dx + v_dash_phase*width,freq );
+              vec4 tex = texture2D(u_dash_atlas, vec2(u/freq, v_dash_index));
+              float dash_center= tex.x * width;
+              float dash_type  = tex.y;
+              float _start = tex.z * width;
+              float _stop  = tex.a * width;
+              float dash_start = dx - u + _start;
+              float dash_stop  = dx - u + _stop;
+              
+              // Compute extents of the first dash (the one relative to v_segment.x)
+              // Note: this could be computed in the vertex shader
+              if( (dash_stop < segment_start) && (dash_caps.x != 5.0) ) {
+                  float u = mod(segment_start + v_dash_phase*width, freq);
+                  vec4 tex = texture2D(u_dash_atlas, vec2(u/freq, v_dash_index));
+                  dash_center= tex.x * width;
+                  //dash_type  = tex.y;
+                  float _start = tex.z * width;
+                  float _stop  = tex.a * width;
+                  dash_start = segment_start - u + _start;
+                  dash_stop = segment_start - u + _stop;
+              }
+      
+              // Compute extents of the last dash (the one relatives to v_segment.y)
+              // Note: This could be computed in the vertex shader
+              else if( (dash_start > segment_stop)  && (dash_caps.y != 5.0) ) {
+                  float u = mod(segment_stop + v_dash_phase*width, freq);
+                  vec4 tex = texture2D(u_dash_atlas, vec2(u/freq, v_dash_index));
+                  dash_center= tex.x * width;
+                  //dash_type  = tex.y;
+                  float _start = tex.z * width;
+                  float _stop  = tex.a * width;
+                  dash_start = segment_stop - u + _start;
+                  dash_stop  = segment_stop - u + _stop;            
+              }
+      
+              // This test if the we are dealing with a discontinuous angle
+              bool discontinuous = ((dx <  segment_center) && abs(v_angles.x) > THETA) ||
+                                   ((dx >= segment_center) && abs(v_angles.y) > THETA);
+              //if( dx < line_start) discontinuous = false;
+              //if( dx > line_stop)  discontinuous = false;
+      
+              float d_join = join( int(v_linejoin), abs(dy),
+                                  v_segment, v_texcoord, v_miter, v_miter_limit, v_linewidth );
+      
+              // When path is closed, we do not have room for linecaps, so we make room
+              // by shortening the total length
+              if (closed) {
+                   line_start += v_linewidth/2.0;
+                   line_stop  -= v_linewidth/2.0;
+              }
+      
+              // We also need to take antialias area into account
+              //line_start += v_antialias;
+              //line_stop  -= v_antialias;
+      
+              // Check is dash stop is before line start
+              if( dash_stop <= line_start ) {
+                  discard;
+              }
+              // Check is dash start is beyond line stop
+              if( dash_start >= line_stop ) {
+                  discard;
+              }
+      
+              // Check if current dash start is beyond segment stop
+              if( discontinuous ) {
+                  // Dash start is beyond segment, we discard
+                  if( (dash_start > segment_stop) ) {
+                      discard;
+                      //gl_FragColor = vec4(1.0,0.0,0.0,.25); return;
+                  }
+                      
+                  // Dash stop is before segment, we discard
+                  if( (dash_stop < segment_start) ) {
+                      discard;  //gl_FragColor = vec4(0.0,1.0,0.0,.25); return;
+                  }
+                      
+                  // Special case for round caps (nicer with this)
+                  if( dash_caps.x == 1.0 ) {
+                      if( (u > _stop) && (dash_stop > segment_stop )  && (abs(v_angles.y) < PI/2.0)) {
+                          discard;
+                      }
+                  }
+      
+                  // Special case for round caps  (nicer with this)
+                  if( dash_caps.y == 1.0 ) {
+                      if( (u < _start) && (dash_start < segment_start )  && (abs(v_angles.x) < PI/2.0)) {
+                          discard;
+                      }
+                  }
+      
+                  // Special case for triangle caps (in & out) and square
+                  // We make sure the cap stop at crossing frontier
+                  if( (dash_caps.x != 1.0) && (dash_caps.x != 5.0) ) {
+                      if( (dash_start < segment_start )  && (abs(v_angles.x) < PI/2.0) ) {
+                          float a = v_angles.x/2.0;
+                          float x = (segment_start-dx)*cos(a) - dy*sin(a);
+                          float y = (segment_start-dx)*sin(a) + dy*cos(a);
+                          if( x > 0.0 ) discard;
+                          // We transform the cap into square to avoid holes
+                          dash_caps.x = 4.0;
+                      }
+                  }
+      
+                  // Special case for triangle caps (in & out) and square
+                  // We make sure the cap stop at crossing frontier
+                  if( (dash_caps.y != 1.0) && (dash_caps.y != 5.0) ) {
+                      if( (dash_stop > segment_stop )  && (abs(v_angles.y) < PI/2.0) ) {
+                          float a = v_angles.y/2.0;
+                          float x = (dx-segment_stop)*cos(a) - dy*sin(a);
+                          float y = (dx-segment_stop)*sin(a) + dy*cos(a);
+                          if( x > 0.0 ) discard;
+                          // We transform the caps into square to avoid holes
+                          dash_caps.y = 4.0;
+                      }
+                  }
+              }
+      
+              // Line cap at start
+              if( (dx < line_start) && (dash_start < line_start) && (dash_stop > line_start) ) {
+                  d = cap( int(linecaps.x), dx-line_start, dy, t);
+              }
+              // Line cap at stop
+              else if( (dx > line_stop) && (dash_stop > line_stop) && (dash_start < line_stop) ) {
+                  d = cap( int(linecaps.y), dx-line_stop, dy, t);
+              }
+              // Dash cap left
+              else if( dash_type < 0.0 ) {
+                  d = cap( int(dash_caps.y), abs(u-dash_center), dy, t);
+                  if( (dx > line_start) && (dx < line_stop) )
+                      d = max(d,d_join);
+              }
+              // Dash cap right
+              else if( dash_type > 0.0 ) {
+                  d = cap( int(dash_caps.x), abs(dash_center-u), dy, t);
+                  if( (dx > line_start) && (dx < line_stop) )
+                      d = max(d,d_join);
+              }
+              // Dash body (plain)
+              else if( dash_type == 0.0 ) {
+                  d = abs(dy);
+              }
+      
+              // Line join
+              if( (dx > line_start) && (dx < line_stop)) {
+                  if( (dx <= segment_start) && (dash_start <= segment_start)
+                      && (dash_stop >= segment_start) ) {
+                      d = d_join;
+                      // Antialias at outer border
+                      float angle = PI/2.+v_angles.x;
+                      float f = abs( (segment_start - dx)*cos(angle) - dy*sin(angle));
+                      d = max(f,d);
+                  }
+                  else if( (dx > segment_stop) && (dash_start <= segment_stop)
+                           && (dash_stop >= segment_stop) ) {
+                      d = d_join;
+                      // Antialias at outer border
+                      float angle = PI/2.+v_angles.y;
+                      float f = abs((dx - segment_stop)*cos(angle) - dy*sin(angle));
+                      d = max(f,d);
+                  }
+                  else if( dx < (segment_start - v_linewidth/2.)) {
+                      discard;
+                  }
+                  else if( dx > (segment_stop + v_linewidth/2.)) {
+                      discard;
+                  }
+              }
+              else if( dx < (segment_start - v_linewidth/2.)) {
+                  discard;
+              }
+              else if( dx > (segment_stop + v_linewidth/2.)) {
+                  discard;
+              }
+          }
+              
+          // Distance to border ------------------------------------------------------
+          d = d - t;
+          if( d < 0.0 ) {
+              gl_FragColor = color;
+          }
+          else {
+              d /= v_antialias;
+              gl_FragColor = vec4(color.xyz, exp(-d*d)*color.a);
+          }
+      }
     """
     
     init: () ->
