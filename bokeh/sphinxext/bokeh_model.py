@@ -5,9 +5,6 @@ all the attributes (including Bokeh properties) of a Bokeh
 model class. A JSON prototype showing all the possible
 JSON fields will also be generated.
 
-Usage
------
-
 This directive takes the path to a Bokeh model class as an
 argument::
 
@@ -26,8 +23,6 @@ For the following definition of ``bokeh.sphinxext.sample.Foo``::
 
 the above usage yields the output:
 
-----
-
     .. bokeh-model:: bokeh.sphinxext.sample.Foo
 
 """
@@ -45,7 +40,6 @@ from sphinx.errors import SphinxError
 from sphinx.util.compat import Directive
 from sphinx.util.nodes import nested_parse_with_titles
 
-from bokeh._json_encoder import serialize_json
 from bokeh.model import Viewable
 
 
@@ -93,7 +87,7 @@ class BokehModelDirective(Directive):
         model_obj = model()
 
         model_json = json.dumps(
-            json.loads(serialize_json(model_obj.vm_serialize(False))),
+            model_obj.to_json(include_defaults=True),
             sort_keys=True,
             indent=2,
             separators=(',', ': ')

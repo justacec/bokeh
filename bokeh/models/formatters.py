@@ -6,9 +6,9 @@ from __future__ import absolute_import
 
 from .tickers import Ticker
 from ..model import Model
-from ..properties import abstract
-from ..properties import Bool, Int, String, Enum, Auto, List, Dict, Either, Instance
-from ..enums import DatetimeUnits, RoundingFunction, NumeralLanguage
+from ..core.properties import abstract
+from ..core.properties import Bool, Int, String, Enum, Auto, List, Dict, Either, Instance
+from ..core.enums import DatetimeUnits, RoundingFunction, NumeralLanguage
 
 @abstract
 class TickFormatter(Model):
@@ -136,7 +136,7 @@ class PrintfTickFormatter(TickFormatter):
     """ Tick formatter based on a printf-style format string. """
 
     format = String("%s", help="""
-    The numer format, as defined as follows: the placeholder in the format
+    The number format, as defined as follows: the placeholder in the format
     string is marked by % and is followed by one or more of these elements,
     in this order:
 
@@ -146,7 +146,7 @@ class PrintfTickFormatter(TickFormatter):
 
     * An optional padding specifier
         Specifies what (if any) character to use for padding. Possible values
-        are 0 or any other character precedeed by a ``'`` (single quote). The
+        are 0 or any other character preceded by a ``'`` (single quote). The
         default is to pad with spaces.
 
     * An optional ``-`` sign

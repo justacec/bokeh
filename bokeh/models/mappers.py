@@ -4,10 +4,10 @@
 from __future__ import absolute_import
 
 from ..model import Model
-from ..properties import abstract
-from ..properties import Float, Color, Enum, Seq, String
-from ..enums import Palette
-from .. import colors as bkColors
+from ..core.properties import abstract
+from ..core.properties import Float, Color, Enum, Seq, String
+from ..core.enums import Palette
+rom .. import colors as bkColors
 from .. import palettes as bkPalettes
 from .. import palettes
 
@@ -38,7 +38,7 @@ class LinearColorMapper(ColorMapper):
     A sequence of colors to use as the target palette for mapping.
 
     This property can also be set as a ``String``, to the name of
-    any of the palettes shown in :ref:`bokeh_dot_palettes`.
+    any of the palettes shown in :ref:`bokeh.palettes`.
     """).accepts(Enum(Palette), lambda pal: getattr(palettes, pal))
 
     low = Float(help="""

@@ -6,28 +6,28 @@ from __future__ import absolute_import
 from six import string_types
 import warnings
 
-from ..enums import Location
-from ..mixins import LineProps, TextProps, FillProps
-from ..model import Model
-from ..properties import (Bool, Int, String, Enum, Auto, Instance, Either,
-    List, Dict, Include)
-from ..query import find
-from ..util.string import nice_join
-from ..validation.warnings import (MISSING_RENDERERS, NO_GLYPH_RENDERERS,
+from ..core.query import find
+from ..core import validation
+from ..core.validation.warnings import (MISSING_RENDERERS, NO_DATA_RENDERERS,
     EMPTY_LAYOUT, MALFORMED_CATEGORY_LABEL)
-from ..validation.errors import REQUIRED_RANGE
-from .. import validation
+from ..core.enums import Location
+from ..core.property_mixins import LineProps, TextProps, FillProps
+from ..model import Model
+from ..core.properties import (Bool, Int, String, Enum, Auto, Instance, Either,
+    List, Dict, Include, Override)
+from ..util.string import nice_join
+from ..core.validation.errors import REQUIRED_RANGE
 
 from .glyphs import Glyph
 from .ranges import Range, Range1d, FactorRange
-from .renderers import Renderer, GlyphRenderer, TileRenderer, DynamicImageRenderer
+from .renderers import Renderer, GlyphRenderer, DataRenderer, TileRenderer, DynamicImageRenderer
 from .sources import DataSource, ColumnDataSource
 from .tools import Tool, ToolEvents
 from .component import Component
 
 def _select_helper(args, kwargs):
     """
-    Allow fexible selector syntax.
+    Allow flexible selector syntax.
     Returns:
         a dict
     """
@@ -54,6 +54,11 @@ def _select_helper(args, kwargs):
     else:
         selector = kwargs
     return selector
+
+class LayoutBox(Model):
+    ''' Represents an **on-canvas** layout.
+
+    '''
 
 class Plot(Component):
     """ Model representing a plot, containing glyphs, guides, annotations.
@@ -122,7 +127,7 @@ class Plot(Component):
         selector = _select_helper(args, kwargs)
 
         # Want to pass selector that is a dictionary
-        from ..plotting_helpers import _list_attr_splat
+        from ..plotting.helpers import _list_attr_splat
         return _list_attr_splat(find(self.references(), selector, {'plot': self}))
 
     def row(self, row, gridplot):
@@ -196,6 +201,8 @@ class Plot(Component):
             if tool.plot is not None:
                 raise ValueError("tool %s to be added already has 'plot' attribute set" % tool)
             tool.plot = self
+            if hasattr(tool, 'overlay'):
+                self.renderers.append(tool.overlay)
             self.tools.append(tool)
 
     def add_glyph(self, source_or_glyph, glyph=None, **kw):
@@ -253,7 +260,7 @@ class Plot(Component):
         '''Adds new DynamicImageRenderer into the Plot.renderers
 
         Args:
-            image_source (ImageSource) : a image source instance which contain image configuration 
+            image_source (ImageSource) : a image source instance which contain image configuration
 
         Keyword Arguments:
             Additional keyword arguments are passed on as-is to the dynamic image renderer
@@ -279,9 +286,9 @@ class Plot(Component):
         if len(self.renderers) == 0:
             return str(self)
 
-    @validation.warning(NO_GLYPH_RENDERERS)
-    def _check_no_glyph_renderers(self):
-        if len(self.select(GlyphRenderer)) == 0:
+    @validation.warning(NO_DATA_RENDERERS)
+    def _check_no_data_renderers(self):
+        if len(self.select(DataRenderer)) == 0:
             return str(self)
 
     @validation.warning(MALFORMED_CATEGORY_LABEL)
@@ -346,6 +353,15 @@ class Plot(Component):
     This is useful for adding additional axes.
     """)
 
+    hidpi = Bool(default=True, help="""
+    Whether to use HiDPI mode when available.
+    """)
+
+    title_standoff = Int(default=8, help="""
+    How far (in screen units) to place a title away from the central
+    plot region.
+    """)
+
     title = String('', help="""
     A title for the plot.
     """)
@@ -354,9 +370,17 @@ class Plot(Component):
     The %s for the plot title.
     """)
 
+    title_text_align = Override(default='center')
+
+    title_text_baseline = Override(default='alphabetic')
+
+    title_text_font_size = Override(default={ 'value' : '20pt' })
+
     outline_props = Include(LineProps, help="""
     The %s for the plot border outline.
     """)
+
+    outline_line_color = Override(default="#aaaaaa")
 
     renderers = List(Instance(Renderer), help="""
     A list of all renderers for this plot, including guides and annotations
@@ -383,7 +407,9 @@ class Plot(Component):
     A list of renderers to occupy the area to the right of the plot.
     """)
 
-    above = List(Instance(Renderer), help="""
+    # TODO (bev) LayoutBox here is a temporary workaround to the fact that
+    # plot titles are not proper renderers
+    above = List(Either(Instance(Renderer), Instance(LayoutBox)), help="""
     A list of renderers to occupy the area above of the plot.
     """)
 
@@ -425,8 +451,8 @@ class Plot(Component):
     def background_fill(self):
         warnings.warn(
             """
-            Glyph property 'background_fill' will be deprecated in Bokeh
-            0.12.0. Use 'background_fill_color' instead.
+            Plot property 'background_fill' was deprecated in Bokeh
+            0.11.0 and will be removed. Use 'background_fill_color' instead.
             """)
         return self.background_fill_color
 
@@ -434,8 +460,8 @@ class Plot(Component):
     def background_fill(self, color):
         warnings.warn(
             """
-            Glyph property 'background_fill' will be deprecated in Bokeh
-            0.12.0. Use 'background_fill_color' instead.
+            Plot property 'background_fill' was deprecated in Bokeh
+            0.11.0 and will be removed. Use 'background_fill_color' instead.
             """)
         self.background_fill_color = color
 
@@ -443,8 +469,8 @@ class Plot(Component):
     def border_fill(self):
         warnings.warn(
             """
-            Glyph property 'border_fill' will be deprecated in Bokeh 0.12.0.
-            Use 'border_fill_color' instead.
+            Plot property 'border_fill' was deprecated in Bokeh 0.11.0 and
+            will be removed. Use 'border_fill_color' instead.
             """)
         return self.border_fill_color
 
@@ -452,8 +478,8 @@ class Plot(Component):
     def border_fill(self, color):
         warnings.warn(
             """
-            Glyph property 'border_fill' will be deprecated in Bokeh 0.12.0.
-            Use 'border_fill_color' instead.
+            Plot property 'border_fill' was deprecated in Bokeh 0.11.0 and
+            will be removed. Use 'border_fill_color' instead.
             """)
         self.border_fill_color = color
 
@@ -461,9 +487,13 @@ class Plot(Component):
     The %s for the plot background style.
     """)
 
+    background_fill_color = Override(default='#ffffff')
+
     border_props = Include(FillProps, help="""
     The %s for the plot border style.
     """)
+
+    border_fill_color = Override(default='#ffffff')
 
     min_border_top = Int(50, help="""
     Minimum size in pixels of the padding region above the top of the
@@ -506,7 +536,7 @@ class Plot(Component):
     """)
 
     min_border = Int(50, help="""
-    A convenience property to set all all the ``min_X_border`` properties
+    A convenience property to set all all the ``min_border_X`` properties
     to the same value. If an individual border property is explicitly set,
     it will override ``min_border``.
     """)
@@ -560,7 +590,7 @@ class Plot(Component):
     """)
 
 
-class GridPlot(Plot):
+class GridPlot(Component):
     """ A 2D grid of plots rendered on separate canvases in an HTML table.
 
     """
@@ -572,8 +602,9 @@ class GridPlot(Plot):
     @validation.warning(MISSING_RENDERERS)
     def _check_missing_renderers(self):
         pass
-    @validation.warning(NO_GLYPH_RENDERERS)
-    def _check_no_glyph_renderers(self):
+
+    @validation.warning(NO_DATA_RENDERERS)
+    def _check_no_data_renderers(self):
         pass
 
     @validation.warning(EMPTY_LAYOUT)
@@ -582,7 +613,7 @@ class GridPlot(Plot):
         if not list(chain(self.children)):
             return str(self)
 
-    children = List(List(Instance(Plot)), help="""
+    children = List(List(Instance(Plot)), default=[[]], help="""
     An array of plots to display in a grid, given as a list of lists of
     Plot objects. To leave a position in the grid empty, pass None for
     that position in the ``children`` list.
@@ -592,9 +623,14 @@ class GridPlot(Plot):
     Distance (in pixels) between adjacent plots.
     """)
 
+    toolbar_location = Enum(Location, default="left", help="""
+    Where the toolbar will be located. If set to None, no toolbar
+    will be attached to the plot.
+    """)
+
     def select(self, *args, **kwargs):
         ''' Query this object and all of its references for objects that
-        match the given selector. See Plot.select for detailed usage infomation.
+        match the given selector. See Plot.select for detailed usage information.
 
         Returns:
             seq[Model]
@@ -603,7 +639,7 @@ class GridPlot(Plot):
         selector = _select_helper(args, kwargs)
 
         # Want to pass selector that is a dictionary
-        from ..plotting_helpers import _list_attr_splat
+        from ..plotting.helpers import _list_attr_splat
         return _list_attr_splat(find(self.references(), selector, {'gridplot': self}))
 
     def column(self, col):

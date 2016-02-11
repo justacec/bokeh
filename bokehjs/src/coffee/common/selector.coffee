@@ -1,20 +1,20 @@
 _ = require "underscore"
-HasProperties = require "./has_properties"
+HasProps = require "../core/has_props"
 hittest = require "./hittest"
-{logger} = require "./logging"
+{logger} = require "../core/logging"
 
-class Selector extends HasProperties
+class Selector extends HasProps
   type: 'Selector'
 
-  update: (indices, final, append) ->
-    @set('timestamp', new Date())
-    @set('final', final)
+  update: (indices, final, append, silent=false) ->
+    @set('timestamp', new Date(), {silent: silent})
+    @set('final', final, {silent: silent})
     if append
       indices['0d'].indices =  _.union(@get('indices')['0d'].indices, indices['0d'].indices)
-      indices['0d'].flag =  @get('indices')['0d'].flag or indices['0d'].flag
+      indices['0d'].glyph =  @get('indices')['0d'].glyph or indices['0d'].glyph
       indices['1d'].indices =  _.union(@get('indices')['1d'].indices, indices['1d'].indices)
       indices['2d'].indices =  _.union(@get('indices')['2d'].indices, indices['2d'].indices)
-    @set('indices', indices)
+    @set('indices', indices, {silent: silent})
 
   clear: () ->
     @set('timestamp', new Date())

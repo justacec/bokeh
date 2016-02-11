@@ -2,10 +2,13 @@ from __future__ import absolute_import, print_function
 
 import unittest
 
+from copy import copy
+
 import bokeh.document as document
 from bokeh.io import curdoc
 from bokeh.model import Model
-from bokeh.properties import Int, Instance, String
+from bokeh.models import ColumnDataSource
+from bokeh.core.properties import Int, Instance, String, DistanceSpec
 
 class AnotherModelInTestDocument(Model):
     bar = Int(1)
@@ -16,6 +19,9 @@ class SomeModelInTestDocument(Model):
 
 class ModelThatOverridesName(Model):
     name = String()
+
+class ModelWithSpecInTestDocument(Model):
+    foo = DistanceSpec(2)
 
 class TestDocument(unittest.TestCase):
 
@@ -29,6 +35,23 @@ class TestDocument(unittest.TestCase):
         d.add_root(AnotherModelInTestDocument())
         assert len(d.roots) == 1
         assert next(iter(d.roots)).document == d
+
+    def test_roots_preserves_insertion_order(self):
+        d = document.Document()
+        assert not d.roots
+        roots = [
+            AnotherModelInTestDocument(),
+            AnotherModelInTestDocument(),
+            AnotherModelInTestDocument(),
+        ]
+        for r in roots:
+            d.add_root(r)
+        assert len(d.roots) == 3
+        assert type(d.roots) is list
+        roots_iter = iter(d.roots)
+        assert next(roots_iter) is roots[0]
+        assert next(roots_iter) is roots[1]
+        assert next(roots_iter) is roots[2]
 
     def test_set_title(self):
         d = document.Document()
@@ -274,6 +297,35 @@ class TestDocument(unittest.TestCase):
         assert len(curdoc_from_listener) == 1
         assert curdoc_from_listener[0] is d
 
+    def test_stream_notification(self):
+        d = document.Document()
+        assert not d.roots
+        m = ColumnDataSource(data=dict(a=[10], b=[20]))
+        d.add_root(m)
+        assert len(d.roots) == 1
+        assert curdoc() is not d
+        events = []
+        curdoc_from_listener = []
+        def listener(event):
+            curdoc_from_listener.append(curdoc())
+            events.append(event)
+        d.on_change(listener)
+        m.stream(dict(a=[11, 12], b=[21, 22]), 200)
+        assert events
+        event = events[0]
+        assert isinstance(event, document.ModelChangedEvent)
+        assert isinstance(event.hint, document.ColumnsStreamedEvent)
+        assert event.document == d
+        assert event.model == m
+        assert event.hint.column_source == m
+        assert event.hint.data == dict(a=[11, 12], b=[21, 22])
+        assert event.hint.rollover == 200
+        assert event.attr == 'data'
+        assert event.old == dict(a=[10], b=[20])
+        assert event.new == dict(a=[10, 11, 12], b=[20, 21, 22])
+        assert len(curdoc_from_listener) == 1
+        assert curdoc_from_listener[0] is d
+
     def test_change_notification_removal(self):
         d = document.Document()
         assert not d.roots
@@ -356,11 +408,10 @@ class TestDocument(unittest.TestCase):
 
         def cb(): pass
 
-        callback = d.add_periodic_callback(cb, 1, 'abc')
+        callback = d.add_periodic_callback(cb, 1)
         assert len(d.session_callbacks) == len(events) == 1
         assert isinstance(events[0], document.SessionCallbackAdded)
         assert callback == d.session_callbacks[0] == events[0].callback
-        assert callback.id == 'abc'
         assert callback.period == 1
 
         callback = d.remove_periodic_callback(cb)
@@ -382,14 +433,37 @@ class TestDocument(unittest.TestCase):
 
         def cb(): pass
 
-        callback = d.add_timeout_callback(cb, 1, 'abc')
+        callback = d.add_timeout_callback(cb, 1)
         assert len(d.session_callbacks) == len(events) == 1
         assert isinstance(events[0], document.SessionCallbackAdded)
         assert callback == d.session_callbacks[0] == events[0].callback
-        assert callback.id == 'abc'
         assert callback.timeout == 1
 
         callback = d.remove_timeout_callback(cb)
+        assert len(d.session_callbacks) == 0
+        assert len(events) == 2
+        assert isinstance(events[0], document.SessionCallbackAdded)
+        assert isinstance(events[1], document.SessionCallbackRemoved)
+
+    def test_add_remove_next_tick_callback(self):
+        d = document.Document()
+
+        events = []
+        def listener(event):
+            events.append(event)
+        d.on_change(listener)
+
+        assert len(d.session_callbacks) == 0
+        assert not events
+
+        def cb(): pass
+
+        callback = d.add_next_tick_callback(cb)
+        assert len(d.session_callbacks) == len(events) == 1
+        assert isinstance(events[0], document.SessionCallbackAdded)
+        assert callback == d.session_callbacks[0] == events[0].callback
+
+        callback = d.remove_next_tick_callback(cb)
         assert len(d.session_callbacks) == 0
         assert len(events) == 2
         assert isinstance(events[0], document.SessionCallbackAdded)
@@ -413,6 +487,17 @@ class TestDocument(unittest.TestCase):
         def cb():
             curdoc_from_cb.append(curdoc())
         callback = d.add_timeout_callback(cb, 1)
+        callback.callback()
+        assert len(curdoc_from_cb) == 1
+        assert curdoc_from_cb[0] is d
+
+    def test_next_tick_callback_gets_curdoc(self):
+        d = document.Document()
+        assert curdoc() is not d
+        curdoc_from_cb = []
+        def cb():
+            curdoc_from_cb.append(curdoc())
+        callback = d.add_next_tick_callback(cb)
         callback.callback()
         assert len(curdoc_from_cb) == 1
         assert curdoc_from_cb[0] is d
@@ -503,17 +588,71 @@ class TestDocument(unittest.TestCase):
         d.add_root(root2)
         assert len(d.roots) == 2
 
-        event1 = document.ModelChangedEvent(d, root1, 'foo', root1.foo, 57)
+        event1 = document.ModelChangedEvent(d, root1, 'foo', root1.foo, 57, 57)
         patch1 = d.create_json_patch_string([event1])
         d.apply_json_patch_string(patch1)
 
         assert root1.foo == 57
 
-        event2 = document.ModelChangedEvent(d, child1, 'foo', child1.foo, 67)
+        event2 = document.ModelChangedEvent(d, child1, 'foo', child1.foo, 67, 67)
         patch2 = d.create_json_patch_string([event2])
         d.apply_json_patch_string(patch2)
 
         assert child1.foo == 67
+
+    def test_patch_spec_property(self):
+        d = document.Document()
+        assert not d.roots
+        assert len(d._all_models) == 0
+        root1 = ModelWithSpecInTestDocument(foo=42)
+        d.add_root(root1)
+        assert len(d.roots) == 1
+
+        def patch_test(new_value):
+            serializable_new = root1.lookup('foo').descriptor.to_serializable(root1,
+                                                                              'foo',
+                                                                              new_value)
+            event1 = document.ModelChangedEvent(d, root1, 'foo', root1.foo, new_value,
+                                                serializable_new)
+            patch1 = d.create_json_patch_string([event1])
+            d.apply_json_patch_string(patch1)
+            if isinstance(new_value, dict):
+                expected = copy(new_value)
+                if 'units' not in expected:
+                    expected['units'] = root1.foo_units
+                self.assertDictEqual(expected, root1.lookup('foo').serializable_value(root1))
+            else:
+                self.assertEqual(new_value, root1.foo)
+        patch_test(57)
+        self.assertEqual('data', root1.foo_units)
+        patch_test(dict(value=58))
+        self.assertEqual('data', root1.foo_units)
+        patch_test(dict(value=58, units='screen'))
+        self.assertEqual('screen', root1.foo_units)
+        patch_test(dict(value=59, units='screen'))
+        self.assertEqual('screen', root1.foo_units)
+        patch_test(dict(value=59, units='data'))
+        self.assertEqual('data', root1.foo_units)
+        patch_test(dict(value=60, units='data'))
+        self.assertEqual('data', root1.foo_units)
+        patch_test(dict(value=60, units='data'))
+        self.assertEqual('data', root1.foo_units)
+        patch_test(61)
+        self.assertEqual('data', root1.foo_units)
+        root1.foo = "a_string" # so "woot" gets set as a string
+        patch_test("woot")
+        self.assertEqual('data', root1.foo_units)
+        patch_test(dict(field="woot2"))
+        self.assertEqual('data', root1.foo_units)
+        patch_test(dict(field="woot2", units='screen'))
+        self.assertEqual('screen', root1.foo_units)
+        patch_test(dict(field="woot3"))
+        self.assertEqual('screen', root1.foo_units)
+        patch_test(dict(value=70))
+        self.assertEqual('screen', root1.foo_units)
+        root1.foo = 123 # so 71 gets set as a number
+        patch_test(71)
+        self.assertEqual('screen', root1.foo_units)
 
     def test_patch_reference_property(self):
         d = document.Document()
@@ -534,7 +673,7 @@ class TestDocument(unittest.TestCase):
         assert child2._id not in d._all_models
         assert child3._id not in d._all_models
 
-        event1 = document.ModelChangedEvent(d, root1, 'child', root1.child, child3)
+        event1 = document.ModelChangedEvent(d, root1, 'child', root1.child, child3, child3)
         patch1 = d.create_json_patch_string([event1])
         d.apply_json_patch_string(patch1)
 
@@ -545,7 +684,7 @@ class TestDocument(unittest.TestCase):
         assert child3._id in d._all_models
 
         # put it back how it was before
-        event2 = document.ModelChangedEvent(d, root1, 'child', root1.child, child1)
+        event2 = document.ModelChangedEvent(d, root1, 'child', root1.child, child1, child1)
         patch2 = d.create_json_patch_string([event2])
         d.apply_json_patch_string(patch2)
 
@@ -571,8 +710,8 @@ class TestDocument(unittest.TestCase):
 
         child2 = SomeModelInTestDocument(foo=44)
 
-        event1 = document.ModelChangedEvent(d, root1, 'foo', root1.foo, 57)
-        event2 = document.ModelChangedEvent(d, root1, 'child', root1.child, child2)
+        event1 = document.ModelChangedEvent(d, root1, 'foo', root1.foo, 57, 57)
+        event2 = document.ModelChangedEvent(d, root1, 'child', root1.child, child2, child2)
         patch1 = d.create_json_patch_string([event1, event2])
         d.apply_json_patch_string(patch1)
 
@@ -598,3 +737,156 @@ class TestDocument(unittest.TestCase):
     # TODO test serialize/deserialize with list-and-dict-valued properties
 
     # TODO test replace_with_json
+
+    def test_compute_one_attribute_patch(self):
+        from bokeh.document import Document
+
+        d = Document()
+        root1 = SomeModelInTestDocument(foo=42)
+        child1 = SomeModelInTestDocument(foo=43)
+        root1.child = child1
+        d.add_root(root1)
+
+        before = d.to_json()
+
+        root1.foo=47
+
+        after = d.to_json()
+
+        patch = Document._compute_patch_between_json(before, after)
+
+        expected = dict(references=[],
+                        events=[
+                            {'attr': u'foo',
+                             'kind': 'ModelChanged',
+                             'model': {'id': None,
+                                       'type': 'SomeModelInTestDocument'},
+                             'new': 47}
+                        ])
+        expected['events'][0]['model']['id'] = root1._id
+        self.assertDictEqual(expected, patch)
+
+        d2 = Document.from_json(before)
+        d2.apply_json_patch(patch)
+        self.assertEqual(root1.foo, d2.roots[0].foo)
+
+    def test_compute_two_attribute_patch(self):
+        from bokeh.document import Document
+        d = Document()
+        root1 = SomeModelInTestDocument(foo=42)
+        child1 = AnotherModelInTestDocument(bar=43)
+        root1.child = child1
+        d.add_root(root1)
+
+        before = d.to_json()
+
+        root1.foo=47
+        child1.bar=57
+
+        after = d.to_json()
+
+        patch = Document._compute_patch_between_json(before, after)
+
+        expected = dict(references=[],
+                        events=[
+                            {'attr': u'bar',
+                             'kind': 'ModelChanged',
+                             'model': {'id': None,
+                                       'type': 'AnotherModelInTestDocument'},
+                             'new': 57},
+                            {'attr': u'foo',
+                             'kind': 'ModelChanged',
+                             'model': {'id': None,
+                                       'type': 'SomeModelInTestDocument'},
+                             'new': 47}
+                            ])
+        expected['events'][0]['model']['id'] = child1._id
+        expected['events'][1]['model']['id'] = root1._id
+
+        # order is undefined, so fix our expectation if needed
+        self.assertEqual(2, len(patch['events']))
+        if patch['events'][0]['model']['type'] == 'AnotherModelInTestDocument':
+            pass
+        else:
+            tmp = expected['events'][0]
+            expected['events'][0] = expected['events'][1]
+            expected['events'][1] = tmp
+
+        self.assertDictEqual(expected, patch)
+
+        d2 = Document.from_json(before)
+        d2.apply_json_patch(patch)
+        self.assertEqual(root1.foo, d2.roots[0].foo)
+        self.assertEqual(root1.child.bar, d2.roots[0].child.bar)
+
+    def test_compute_remove_root_patch(self):
+        from bokeh.document import Document
+        d = Document()
+        root1 = SomeModelInTestDocument(foo=42)
+        child1 = AnotherModelInTestDocument(bar=43)
+        root1.child = child1
+        d.add_root(root1)
+
+        before = d.to_json()
+
+        d.remove_root(root1)
+
+        after = d.to_json()
+
+        patch = Document._compute_patch_between_json(before, after)
+
+        expected = dict(references=[],
+                        events= [
+                            {'kind': 'RootRemoved',
+                             'model': {'id': None,
+                                       'type': 'SomeModelInTestDocument'}}
+                        ])
+        expected['events'][0]['model']['id'] = root1._id
+
+        self.assertDictEqual(expected, patch)
+
+        d2 = Document.from_json(before)
+        d2.apply_json_patch(patch)
+        self.assertEqual([], d2.roots)
+
+    def test_compute_add_root_patch(self):
+        from bokeh.document import Document
+        d = Document()
+        root1 = SomeModelInTestDocument(foo=42)
+        child1 = AnotherModelInTestDocument(bar=43)
+        root1.child = child1
+        d.add_root(root1)
+
+        before = d.to_json()
+
+        root2 = SomeModelInTestDocument(foo=57)
+        d.add_root(root2)
+
+        after = d.to_json()
+
+        patch = Document._compute_patch_between_json(before, after)
+
+        expected = {
+            'references' : [
+                { 'attributes': {'child': None, 'foo': 57},
+                  'id': None,
+                  'type': 'SomeModelInTestDocument'}
+            ],
+            'events' : [
+                { 'kind': 'RootAdded',
+                  'model': {'id': None,
+                            'type': 'SomeModelInTestDocument'}
+                }
+            ]
+        }
+
+        expected['references'][0]['id'] = root2._id
+        expected['events'][0]['model']['id'] = root2._id
+
+        self.assertDictEqual(expected, patch)
+
+        d2 = Document.from_json(before)
+        d2.apply_json_patch(patch)
+        self.assertEqual(2, len(d2.roots))
+        self.assertEqual(42, d2.roots[0].foo)
+        self.assertEqual(57, d2.roots[1].foo)

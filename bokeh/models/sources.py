@@ -1,13 +1,16 @@
 from __future__ import absolute_import
 
+from ..core import validation
+from ..core.validation.errors import COLUMN_LENGTHS
+from ..core.properties import abstract
+from ..core.properties import Any, Int, String, Instance, List, Dict, Bool, Enum, JSON
 from ..model import Model
-from ..properties import HasProps, abstract
-from ..properties import Any, Int, String, Instance, List, Dict, Bool, Enum
-from ..validation.errors import COLUMN_LENGTHS
-from .. import validation
+from ..util.dependencies import import_optional
+from ..util.deprecate import deprecated
 from ..util.serialization import transform_column_source_data
 from .callbacks import Callback
-from bokeh.deprecate import deprecated
+
+pd = import_optional('pandas')
 
 @abstract
 class DataSource(Model):
@@ -15,8 +18,9 @@ class DataSource(Model):
     not generally useful to instantiate on its own.
 
     """
+
     selected = Dict(String, Dict(String, Any), default={
-        '0d': {'flag': False, 'indices': []},
+        '0d': {'glyph': None, 'indices': []},
         '1d': {'indices': []},
         '2d': {'indices': []}
     }, help="""
@@ -42,21 +46,6 @@ class DataSource(Model):
     callback = Instance(Callback, help="""
     A callback to run in the browser whenever the selection is changed.
     """)
-
-class ColumnsRef(HasProps):
-    """ A utility object to allow referring to a collection of columns
-    from a specified data source, all together.
-
-    """
-
-    source = Instance(DataSource, help="""
-    A data source to reference.
-    """)
-
-    columns = List(String, help="""
-    A list of column names to reference from ``source``.
-    """)
-
 
 class ColumnDataSource(DataSource):
     """ Maps names of columns to sequences or arrays.
@@ -92,8 +81,7 @@ class ColumnDataSource(DataSource):
         # TODO (bev) invalid to pass args and "data", check and raise exception
         raw_data = kw.pop("data", {})
         if not isinstance(raw_data, dict):
-            import pandas as pd
-            if isinstance(raw_data, pd.DataFrame):
+            if pd and isinstance(raw_data, pd.DataFrame):
                 raw_data = self._data_from_df(raw_data)
             else:
                 raise ValueError("expected a dict or pandas.DataFrame, got %s" % raw_data)
@@ -153,7 +141,8 @@ class ColumnDataSource(DataSource):
             DataFrame
 
         """
-        import pandas as pd
+        if not pd:
+            raise RuntimeError('Pandas must be installed to convert to a Pandas Dataframe')
         if self.column_names:
             return pd.DataFrame(self.data, columns=self.column_names)
         else:
@@ -180,8 +169,8 @@ class ColumnDataSource(DataSource):
         self.data[name] = data
         return name
 
-    def vm_serialize(self, changed_only=True):
-        attrs = super(ColumnDataSource, self).vm_serialize(changed_only=changed_only)
+    def _to_json_like(self, include_defaults):
+        attrs = super(ColumnDataSource, self)._to_json_like(include_defaults=include_defaults)
         if 'data' in attrs:
             attrs['data'] = transform_column_source_data(attrs['data'])
         return attrs
@@ -206,49 +195,25 @@ class ColumnDataSource(DataSource):
             import warnings
             warnings.warn("Unable to find column '%s' in data source" % name)
 
+    @deprecated("Bokeh 0.11.0", "bokeh.io.push_notebook")
+    def push_notebook(self):
+        """ Update a data source for a plot in a Jupyter notebook.
 
-    def columns(self, *columns):
-        """ Returns a ColumnsRef object for a column or set of columns
-        on this data source.
+        This function can be be used to update data in plot data sources
+        in the Jupyter notebook, without having to use the Bokeh server.
 
-        Args:
-            *columns
+        .. warning::
+            This function has been deprecated. Please use
+            ``bokeh.io.push_notebook()`` which will push all changes
+            (not just data sources) to the last shown plot in a Jupyter
+            notebook.
 
         Returns:
-            ColumnsRef
+            None
 
         """
-        return ColumnsRef(source=self, columns=list(columns))
-
-
-    # def push_notebook(self):
-    #     """ Update date for a plot in the IPthon notebook in place.
-
-    #     This function can be be used to update data in plot data sources
-    #     in the IPython notebook, without having to use the Bokeh server.
-
-    #     Returns:
-    #         None
-
-    #     .. warning::
-    #         The current implementation leaks memory in the IPython notebook,
-    #         due to accumulating JS code. This function typically works well
-    #         with light UI interactions, but should not be used for continuously
-    #         updating data. See :bokeh-issue:`1732` for more details and to
-    #         track progress on potential fixes.
-
-    #     """
-    #     from IPython.core import display
-    #     from bokeh.protocol import serialize_json
-    #     id = self.ref['id']
-    #     model = self.ref['type']
-    #     json = serialize_json(self.vm_serialize())
-    #     js = """
-    #         var ds = Bokeh.Collections('{model}').get('{id}');
-    #         var data = {json};
-    #         ds.set(data);
-    #     """.format(model=model, id=id, json=json)
-    #     display.display_javascript(js, raw=True)
+        from bokeh.io import push_notebook
+        push_notebook()
 
     @validation.error(COLUMN_LENGTHS)
     def _check_column_lengths(self):
@@ -256,67 +221,77 @@ class ColumnDataSource(DataSource):
         if len(lengths) > 1:
             return str(self)
 
+
+    def stream(self, new_data, rollover=None):
+        import numpy as np
+
+        newkeys = set(new_data.keys())
+        oldkeys = set(self.data.keys())
+        if newkeys != oldkeys:
+            missing = oldkeys - newkeys
+            extra = newkeys - oldkeys
+            if missing and extra:
+                raise ValueError("Must stream updates to all existing columns (missing: %s, extra: %s)" % (", ".join(sorted(missing)), ", ".join(sorted(extra))))
+            elif missing:
+                raise ValueError("Must stream updates to all existing columns (missing: %s)" % ", ".join(sorted(missing)))
+            else:
+                raise ValueError("Must stream updates to all existing columns (extra: %s)" % ", ".join(sorted(extra)))
+
+        lengths = set()
+        for x in new_data.values():
+            if isinstance(x, np.ndarray):
+                if len(x.shape) != 1:
+                    raise ValueError("stream(...) only supports 1d sequences, got ndarray with size %r" % (x.shape,))
+                lengths.add(x.shape[0])
+            else:
+                lengths.add(len(x))
+
+        if len(lengths) > 1:
+            raise ValueError("All streaming column updates must be the same length")
+
+        self.data._stream(self.document, self, new_data, rollover)
+
+class GeoJSONDataSource(ColumnDataSource):
+
+    geojson = JSON(help="""
+    GeoJSON that contains features for plotting. Currently GeoJSONDataSource can
+    only process a FeatureCollection or GeometryCollection.
+    """)
+
+
 @abstract
-class RemoteSource(DataSource):
+class RemoteSource(ColumnDataSource):
+
     data_url = String(help="""
     The URL to the endpoint for the data.
     """)
-    data = Dict(String, Any, help="""
-    Additional data to include directly in this data source object. The
-    columns provided here are merged with those from the Bokeh server.
-    """)
+
     polling_interval = Int(help="""
     polling interval for updating data source in milliseconds
     """)
 
 class AjaxDataSource(RemoteSource):
+
     method = Enum('POST', 'GET', help="http method - GET or POST")
 
     mode = Enum("replace", "append", help="""
     Whether to append new data to existing data (up to ``max_size``),
     or to replace existing data entirely.
     """)
+
     max_size = Int(help="""
     Maximum size of the data array being kept after each pull requests.
     Larger than that size, the data will be right shifted.
     """)
+
     if_modified = Bool(False, help="""
     Whether to include an ``If-Modified-Since`` header in AJAX requests
     to the server. If this header is supported by the server, then only
     new data since the last request will be returned.
     """)
-
-class BlazeDataSource(RemoteSource):
-    #blaze parts
-    expr = Dict(String, Any(), help="""
-    blaze expression graph in json form
+    content_type = String(default='application/json', help="""
+    Set the "contentType" parameter for the Ajax request.
     """)
-    namespace = Dict(String, Any(), help="""
-    namespace in json form for evaluating blaze expression graph
+    http_headers = Dict(String, String, help="""
+    HTTP headers to set for the Ajax request.
     """)
-    local = Bool(help="""
-    Whether this data source is hosted by the bokeh server or not.
-    """)
-
-    def from_blaze(self, remote_blaze_obj, local=True):
-        from blaze.server import to_tree
-        # only one Client object, can hold many datasets
-        assert len(remote_blaze_obj._leaves()) == 1
-        leaf = remote_blaze_obj._leaves()[0]
-        blaze_client = leaf.data
-        json_expr = to_tree(remote_blaze_obj, {leaf : ':leaf'})
-        self.data_url = blaze_client.url + "/compute.json"
-        self.local = local
-        self.expr = json_expr
-
-    def to_blaze(self):
-        from blaze.server.client import Client
-        from blaze.server import from_tree
-        from blaze import Data
-        # hacky - blaze urls have `compute.json` in it, but we need to strip it off
-        # to feed it into the blaze client lib
-        c = Client(self.data_url.rsplit('compute.json', 1)[0])
-        d = Data(c)
-        return from_tree(self.expr, {':leaf' : d})
-
-

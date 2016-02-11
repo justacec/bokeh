@@ -30,8 +30,8 @@ class TestPanel(unittest.TestCase):
     def test_prop_defaults(self):
         p1 = self.panelCls()
         p2 = self.panelCls()
-        self.assertEqual(p1.title, None)
-        self.assertEqual(p2.title, None)
+        self.assertEqual(p1.title, "")
+        self.assertEqual(p2.title, "")
         self.assertEqual(p1.child, None)
         self.assertFalse(p1.closable)
 
@@ -68,25 +68,9 @@ class TestDialog(unittest.TestCase):
         dialog = self.dialogCls()
         self.assertFalse(dialog.visible)
         self.assertTrue(dialog.closable)
-        self.assertEqual(dialog.title, None)
-        self.assertEqual(dialog.content, None)
+        self.assertEqual(dialog.title, "")
+        self.assertEqual(dialog.content, "")
         self.assertEqual(dialog.buttons, [])
-
-class TestLayout(unittest.TestCase):
-
-    def setUp(self):
-        from bokeh.models.widgets.layouts import Layout
-        self.layoutCls = Layout
-
-    def test_expected_props(self):
-        expected_properties = set(['width', 'height'])
-        actual_properties = get_prop_set(self.layoutCls)
-        self.assertTrue(expected_properties.issubset(actual_properties))
-
-    def test_props_defaults(self):
-        layout = self.layoutCls()
-        self.assertEqual(layout.width, None)
-        self.assertEqual(layout.height, None)
 
 
 if __name__ == "__main__":

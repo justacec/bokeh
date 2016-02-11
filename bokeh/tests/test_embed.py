@@ -6,7 +6,7 @@ import unittest
 import bs4
 
 import bokeh.embed as embed
-from bokeh.resources import CDN, INLINE, Resources, JSResources, CSSResources
+from bokeh.resources import CDN, JSResources, CSSResources
 from bokeh.plotting import figure
 from jinja2 import Template
 from six import string_types
@@ -17,6 +17,9 @@ def setUpModule():
     global _embed_test_plot
     _embed_test_plot = figure()
     _embed_test_plot.circle([1,2], [2,3])
+
+def _stable_id():
+    return 'ID'
 
 class TestComponents(unittest.TestCase):
 
@@ -56,11 +59,8 @@ class TestComponents(unittest.TestCase):
         script, div = embed.components(_embed_test_plot)
         self.assertTrue(isinstance(script, str))
 
-    @mock.patch('bokeh.embed.uuid')
-    def test_output_is_without_script_tag_when_wrap_script_is_false(self, mock_uuid):
-        mock_uuid.uuid4 = mock.Mock()
-        mock_uuid.uuid4.return_value = 'uuid'
-
+    @mock.patch('bokeh.embed.make_id', new_callable=lambda: _stable_id)
+    def test_output_is_without_script_tag_when_wrap_script_is_false(self, mock_make_id):
         script, div = embed.components(_embed_test_plot)
         html = bs4.BeautifulSoup(script)
         scripts = html.findAll(name='script')
@@ -71,13 +71,10 @@ class TestComponents(unittest.TestCase):
         self.maxDiff = None
         self.assertEqual(rawscript.strip(), script_content.strip())
 
-    @mock.patch('bokeh.embed.uuid')
-    def test_plot_dict_returned_when_wrap_plot_info_is_false(self, mock_uuid):
-        mock_uuid.uuid4 = mock.Mock()
-        mock_uuid.uuid4.return_value = 'uuid'
-
+    @mock.patch('bokeh.embed.make_id', new_callable=lambda: _stable_id)
+    def test_plot_dict_returned_when_wrap_plot_info_is_false(self, mock_make_id):
         plot = _embed_test_plot
-        expected_plotdict = {"modelid": plot.ref["id"], "elementid": "uuid", "docid": "uuid"}
+        expected_plotdict = {"modelid": plot.ref["id"], "elementid": "ID", "docid": "ID"}
         script, plotdict = embed.components(_embed_test_plot, wrap_plot_info=False)
         self.assertEqual(plotdict, expected_plotdict)
 
@@ -150,52 +147,34 @@ class TestFileHTML(unittest.TestCase):
 
 
 def test_file_html_handles_js_only_resources():
-    js_resources = JSResources(mode="relative")
+    js_resources = JSResources(mode="relative", components=["bokeh"])
     template = Template("<head>{{ bokeh_js }}</head><body></body>")
-    output = embed.file_html(_embed_test_plot, None, "title", template=template, js_resources=js_resources)
-    html = "<head>%s</head><body></body>" % js_resources.use_widgets(False).render_js()
+    output = embed.file_html(_embed_test_plot, (js_resources, None), "title", template=template)
+    html = "<head>%s</head><body></body>" % js_resources.render_js()
     assert output == html
 
 
 @mock.patch('bokeh.embed.warn')
 def test_file_html_provides_warning_if_no_css(mock_warn):
     js_resources = JSResources()
-    embed.file_html(_embed_test_plot, None, "title", js_resources=js_resources)
+    embed.file_html(_embed_test_plot, (js_resources, None), "title")
     mock_warn.assert_called_once_with(
         'No Bokeh CSS Resources provided to template. If required you will need to provide them manually.'
     )
 
 
-@mock.patch('bokeh.embed.warn')
-def test_file_html_provides_warning_if_both_resources_and_js_provided(mock_warn):
-    js_resources = JSResources()
-    embed.file_html(_embed_test_plot, CDN, "title", js_resources=js_resources)
-    mock_warn.assert_called_once_with(
-        'Both resources and js_resources provided. resources will override js_resources.'
-    )
-
-
-@mock.patch('bokeh.embed.warn')
-def test_file_html_provides_warning_if_both_resources_and_css_provided(mock_warn):
-    css_resources = CSSResources()
-    embed.file_html(_embed_test_plot, CDN, "title", css_resources=css_resources)
-    mock_warn.assert_called_once_with(
-        'Both resources and css_resources provided. resources will override css_resources.'
-    )
-
-
 def test_file_html_handles_css_only_resources():
-    css_resources = CSSResources(mode="relative")
+    css_resources = CSSResources(mode="relative", components=["bokeh"])
     template = Template("<head>{{ bokeh_css }}</head><body></body>")
-    output = embed.file_html(_embed_test_plot, None, "title", template=template, css_resources=css_resources)
-    html = "<head>%s</head><body></body>" % css_resources.use_widgets(False).render_css()
+    output = embed.file_html(_embed_test_plot, (None, css_resources), "title", template=template)
+    html = "<head>%s</head><body></body>" % css_resources.render_css()
     assert output == html
 
 
 @mock.patch('bokeh.embed.warn')
 def test_file_html_provides_warning_if_no_js(mock_warn):
     css_resources = CSSResources()
-    embed.file_html(_embed_test_plot, None, "title", css_resources=css_resources)
+    embed.file_html(_embed_test_plot, (None, css_resources), "title")
     mock_warn.assert_called_once_with(
         'No Bokeh JS Resources provided to template. If required you will need to provide them manually.'
     )
@@ -203,21 +182,12 @@ def test_file_html_provides_warning_if_no_js(mock_warn):
 
 class TestAutoloadStatic(unittest.TestCase):
 
-    def test_invalid_resources(self):
-        self.assertRaises(ValueError, embed.autoload_static, _embed_test_plot, INLINE, "some/path")
-
-        dev_resources = (Resources("absolute-dev"), Resources("server-dev"),Resources("relative-dev"))
-        for x in dev_resources:
-            self.assertRaises(ValueError, embed.autoload_static, _embed_test_plot, x, "some/path")
-
     def test_return_type(self):
         r = embed.autoload_static(_embed_test_plot, CDN, "some/path")
         self.assertEqual(len(r), 2)
 
-    @mock.patch('bokeh.embed.uuid')
-    def test_script_attrs(self, mock_uuid):
-        mock_uuid.uuid4 = mock.Mock()
-        mock_uuid.uuid4.return_value = 'uuid'
+    @mock.patch('bokeh.embed.make_id', new_callable=lambda: _stable_id)
+    def test_script_attrs(self, mock_make_id):
         js, tag = embed.autoload_static(_embed_test_plot, CDN, "some/path")
         html = bs4.BeautifulSoup(tag)
         scripts = html.findAll(name='script')
@@ -225,54 +195,65 @@ class TestAutoloadStatic(unittest.TestCase):
         attrs = scripts[0].attrs
         self.assertTrue(set(attrs), set(['src',
             'data-bokeh-model-id',
-            'async',
             'id',
             'data-bokeh-doc-id']))
-        self.assertEqual(attrs['async'], 'false')
-        self.assertEqual(attrs['data-bokeh-doc-id'], 'uuid')
+        self.assertEqual(attrs['data-bokeh-doc-id'], 'ID')
         self.assertEqual(attrs['data-bokeh-model-id'], str(_embed_test_plot._id))
         self.assertEqual(attrs['src'], 'some/path')
 
 
-# class TestAutoloadServer(unittest.TestCase):
+class TestAutoloadServer(unittest.TestCase):
 
-#     def setUp(self):
-#         self.sess = Session(load_from_config=False)
-#         self.sess.docid = 'docid10'
-#         self.sess.apikey = 'apikey123'
-#         self.sess.root_url = "http://foo"
+    def test_return_type(self):
+        r = embed.autoload_server(_embed_test_plot, session_id='fakesession')
+        self.assertTrue(isinstance(r, str))
 
-#     def test_return_type(self):
-#         r = embed.autoload_server(_embed_test_plot, self.sess)
-#         self.assertTrue(isinstance(r, str))
+    def test_script_attrs_session_id_provided(self):
+        r = embed.autoload_server(_embed_test_plot, session_id='fakesession')
+        self.assertTrue('bokeh-session-id=fakesession' in r)
+        html = bs4.BeautifulSoup(r)
+        scripts = html.findAll(name='script')
+        self.assertEqual(len(scripts), 1)
+        attrs = scripts[0].attrs
+        self.assertTrue(set(attrs), set([
+            'src',
+            'data-bokeh-doc-id',
+            'data-bokeh-model-id',
+            'id'
+        ]))
+        divid = attrs['id']
+        src = "%s/autoload.js?bokeh-autoload-element=%s&bokeh-session-id=fakesession" % \
+              ("http://localhost:5006", divid)
+        self.assertDictEqual({ 'data-bokeh-doc-id' : '',
+                               'data-bokeh-model-id' : str(_embed_test_plot._id),
+                               'id' : divid,
+                               'src' : src },
+                             attrs)
 
-#     def test_script_attrs(self):
-#         r = embed.autoload_server(_embed_test_plot, self.sess)
-#         html = bs4.BeautifulSoup(r)
-#         scripts = html.findAll(name='script')
-#         self.assertEqual(len(scripts), 1)
-#         attrs = scripts[0].attrs
-#         self.assertTrue(set(attrs), set([
-#             'src',
-#             'data-bokeh-docid',
-#             'data-bokeh-docapikey',
-#             'data-bokeh-modeltype',
-#             'data-bokeh-modelid',
-#             'data-bokeh-root-url',
-#             'async',
-#             'id',
-#             'data-bokeh-data',
-#             'data-bokeh-conn-string'
-#         ]))
-#         self.assertEqual(attrs['async'], 'true')
-#         self.assertEqual(attrs['data-bokeh-data'], 'server')
-#         self.assertEqual(attrs['data-bokeh-docapikey'], 'apikey123')
-#         self.assertEqual(attrs['data-bokeh-docid'], 'docid10')
-#         self.assertEqual(attrs['data-bokeh-modelid'], str(_embed_test_plot._id))
-#         self.assertEqual(attrs['data-bokeh-root-url'], "http://foo/")
-#         divid = attrs['id']
-#         self.assertEqual(attrs['src'], "%s/bokeh/autoload.js/%s" % ("http://foo", divid))
+    def test_script_attrs_no_session_id_provided(self):
+        r = embed.autoload_server(None)
+        self.assertFalse('bokeh-session-id' in r)
+        html = bs4.BeautifulSoup(r)
+        scripts = html.findAll(name='script')
+        self.assertEqual(len(scripts), 1)
+        attrs = scripts[0].attrs
+        self.assertTrue(set(attrs), set([
+            'src',
+            'data-bokeh-doc-id',
+            'data-bokeh-model-id',
+            'id'
+        ]))
+        divid = attrs['id']
+        src = "%s/autoload.js?bokeh-autoload-element=%s" % \
+              ("http://localhost:5006", divid)
+        self.assertDictEqual({ 'data-bokeh-doc-id' : '',
+                               'data-bokeh-model-id' : '',
+                               'id' : divid,
+                               'src' : src },
+                             attrs)
 
+    def test_autoload_server_value_error_on_model_id_without_session_id(self):
+        self.assertRaises(ValueError, embed.autoload_server, _embed_test_plot)
 
 if __name__ == "__main__":
     unittest.main()
