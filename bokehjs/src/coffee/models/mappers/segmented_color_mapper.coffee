@@ -9,11 +9,16 @@ class SegmentedColorMapper extends Model
     super(attrs, options)
     @palette             = @_build_palette(@get('palette'))
     @alpha               = @_rescale_alpha(@get('alpha'))
-    @color_mapping_method = @get('color_mapping_method')
     @little_endian       = @_is_little_endian()
+
     @segments            = null
     if @get('segments')?
       @segments = @get('segments')
+
+    @color_mapping_method = 'linear'
+    if @get('color_mapping_method')?
+      @color_mapping_method = @get('color_mapping_method')
+
 
   generate_linear_interpolation: () ->
     # Extract the keys from the palette which are the break points
