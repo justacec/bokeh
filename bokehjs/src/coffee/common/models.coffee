@@ -62,6 +62,8 @@ module.exports = {
   LinearColorMapper:        require '../models/mappers/linear_color_mapper'
   LinearMapper:             require '../models/mappers/linear_mapper'
   LogMapper:                require '../models/mappers/log_mapper'
+  SegmentedColorMapper:     require '../models/mappers/segmented_color_mapper'
+  LinearColorMapperReplacement:  require '../models/mappers/linear_color_mapper_replacement'
 
   Asterisk:                 require '../models/markers/asterisk'
   CircleCross:              require '../models/markers/circle_cross'
