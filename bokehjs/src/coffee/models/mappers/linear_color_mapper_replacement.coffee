@@ -1,5 +1,4 @@
 _ = require "underscore"
-HasProperties = require "../common/has_properties"
 SegmentedColorMapper = require "./segmented_color_mapper"
 
 class LinearColorMapperReplacement extends SegmentedColorMapper['Model']
