@@ -7,6 +7,8 @@ class SegmentedColorMapper extends Model
 
   initialize: (attrs, options) ->
     super(attrs, options)
+
+
     @palette             = @_build_palette(@get('palette'))
     @alpha               = @_rescale_alpha(@get('alpha'))
     @little_endian       = @_is_little_endian()
@@ -229,4 +231,4 @@ class SegmentedColorMapper extends Model
     return(new_alpha)
 
 module.exports =
-  Model: SegmentedColorMapper,
+  Model: SegmentedColorMapper
