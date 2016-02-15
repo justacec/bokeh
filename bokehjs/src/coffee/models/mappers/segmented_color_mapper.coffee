@@ -159,10 +159,10 @@ class SegmentedColorMapper extends Model
     else
       endian_combiner = color_combination_big_endian
 
-    if @color_mapper_method == 'linear'
+    if @color_mapping_method == 'linear'
       color_mapper = color_mapper_linear
 
-    if @color_mapper_method == 'step'
+    if @color_mapping_method == 'step'
       color_mapper = color_mapper_step
 
     if (endian_combiner != null) & (color_mapper != null)
