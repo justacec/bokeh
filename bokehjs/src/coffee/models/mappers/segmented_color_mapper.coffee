@@ -1,7 +1,9 @@
 _ = require "underscore"
-HasProperties = require "../common/has_properties"
 
-class SegmentedColorMapper extends HasProperties
+Model = require "../../model"
+p = require "../../core/properties"
+
+class SegmentedColorMapper extends Model
 
   initialize: (attrs, options) ->
     super(attrs, options)
