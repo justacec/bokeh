@@ -7,7 +7,7 @@ from ..model import Model
 from ..core.properties import abstract
 from ..core.properties import Float, Color, Enum, Seq, String
 from ..core.enums import Palette
-rom .. import colors as bkColors
+from .. import colors as bkColors
 from .. import palettes as bkPalettes
 from .. import palettes
 
@@ -102,8 +102,7 @@ class SegmentedColorMapper(ColorMapper):
     alpha = Seq(Float, help="""
     A python array, the same length as the dictionary with the
     desired alpha values
-    """
-    )
+    """)
 
     color_mapping_method = String(default='linear', help="""
     A string which describes the method of interpolation.  The default, 'linear',
@@ -126,7 +125,6 @@ class SegmentedColorMapper(ColorMapper):
 
         if color_mapping_method is None and 'color_mapping_method' in kwargs.keys():
             color_mapping_method = kwargs['color_mapping_method']
-
 
         # Define a dict to hold any alpha values that we might extract
         # from the different colors in the passed palette.  These can
