@@ -3,7 +3,7 @@ from __future__ import division
 import numpy as np
 
 from bokeh.plotting import figure, show, output_file
-from bokeh.models import LinearBreaksColorMapper
+from bokeh.models import SegmentedColorMapper
 
 # Generate the nessessary data
 xs = np.linspace(-10, 10, 200)
@@ -21,9 +21,9 @@ for i in range(len(stops)):
     alpha[i] = 0.8
 
 # Define the color mapper
-lcmap = LinearBreaksColorMapper(palette = palette, alpha = alpha)
+lcmap = SegmentedColorMapper(palette = palette, alpha = alpha)
 
-output_file("linear_breaks_color_mapper.html", title="linear_breaks_color_mapper.py example")
+output_file("segmented_color_mapper.html", title="segmented_color_mapper.py example")
 
 # Build the plot
 p = figure(x_range = [-10,10], y_range = [-10,10])
