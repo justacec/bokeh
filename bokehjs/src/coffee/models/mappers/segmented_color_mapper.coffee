@@ -5,6 +5,15 @@ p = require "../../core/properties"
 
 class SegmentedColorMapper extends Model
 
+#  props: ->
+#    return _.extend({}, super(), {
+#      palette:              [p.Any   ]
+#      alpha:                [p.Array ]
+#      color_mapping_method: [p.String]
+#      little_endian:        [p.Bool  ]
+#      segments:             [p.Array]
+#    })
+
   initialize: (attrs, options) ->
     super(attrs, options)
 
